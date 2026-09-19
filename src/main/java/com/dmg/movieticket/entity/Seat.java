@@ -41,4 +41,8 @@ public class Seat {
             foreignKey = @ForeignKey(name = "fk_seat_screen")
     )
     private Screen screen;
+
+    @Builder.Default
+    @Column(nullable = false)
+    private Boolean active = true;
 }
