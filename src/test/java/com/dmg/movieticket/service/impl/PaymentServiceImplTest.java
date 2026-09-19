@@ -73,6 +73,35 @@ class PaymentServiceImplTest {
         assertEquals(9L, service.processPayment(8L, " key ", request).paymentId());
         verifyNoInteractions(processor, seats, events, bookings);
     }
+    @Test void repeatedSuccessfulRequestReplaysSamePaymentAndProcessesOnlyOnce() {
+        payable();
+        Map<String, Payment> storedPayments = new HashMap<>();
+        when(payments.findByIdempotencyKey(anyString()))
+                .thenAnswer(invocation -> Optional.ofNullable(storedPayments.get(invocation.getArgument(0))));
+        doAnswer(invocation -> {
+            Payment payment = invocation.getArgument(0);
+            payment.setId(9L);
+            storedPayments.put(payment.getIdempotencyKey(), payment);
+            return payment;
+        }).when(payments).save(any(Payment.class));
+        when(processor.process(money("150.00"), PaymentMethod.CARD))
+                .thenReturn(new PaymentProcessingResult(true, "PAY-ONCE", null));
+
+        var firstResponse = service.processPayment(8L, "same-key", request);
+        var secondResponse = service.processPayment(8L, "same-key", request);
+        var thirdResponse = service.processPayment(8L, " same-key ", request);
+
+        assertEquals(firstResponse, secondResponse);
+        assertEquals(firstResponse, thirdResponse);
+        assertEquals(PaymentStatus.SUCCESS, thirdResponse.status());
+        assertEquals(9L, thirdResponse.paymentId());
+        assertEquals("PAY-ONCE", thirdResponse.providerReference());
+        assertEquals(1, storedPayments.size());
+        verify(processor, times(1)).process(money("150.00"), PaymentMethod.CARD);
+        verify(events, times(1)).publishEvent(new BookingConfirmedEvent(8L));
+        verify(bookings, times(1)).findByIdAndUserIdForUpdate(8L, 1L);
+        verify(bookings, times(1)).save(booking);
+    }
     @Test void rejectsKeyOwnedByAnotherUser() {
         booking.setUser(User.builder().id(2L).build());
         when(payments.findByIdempotencyKey("key")).thenReturn(Optional.of(Payment.builder().booking(booking).build()));
