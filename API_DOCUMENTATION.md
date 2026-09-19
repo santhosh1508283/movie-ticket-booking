@@ -6,23 +6,21 @@
 http://localhost:8080
 ```
 
-Authentication uses JWT bearer tokens.
+Authentication uses JWT bearer access tokens.
 
 ```http
 Authorization: Bearer <access-token>
 ```
 
-Admin APIs are protected by `ROLE_ADMIN`.
+Admin APIs require `ROLE_ADMIN`.
 
 ---
 
-## 1. Authentication
+## Authentication
 
 ### Register Customer
 
 **POST** `/api/auth/register`
-
-Request:
 
 ```json
 {
@@ -40,15 +38,14 @@ Response:
   "name": "Test Customer",
   "email": "customer@test.com",
   "role": "CUSTOMER",
-  "accessToken": "<jwt>"
+  "accessToken": "<jwt>",
+  "refreshToken": "<opaque-refresh-token>"
 }
 ```
 
 ### Login
 
 **POST** `/api/auth/login`
-
-Request:
 
 ```json
 {
@@ -57,17 +54,39 @@ Request:
 }
 ```
 
+Returns both an access token and a refresh token.
+
+### Refresh Access Token
+
+**POST** `/api/auth/refresh`
+
+```json
+{
+  "refreshToken": "<refresh-token>"
+}
+```
+
+Returns a new access token while keeping the valid refresh token.
+
+### Logout
+
+**POST** `/api/auth/logout`
+
+```json
+{
+  "refreshToken": "<refresh-token>"
+}
+```
+
+Returns `204 No Content` and revokes the refresh token.
+
 ---
 
-## 2. Admin User Management
+## Admin User Management
 
 ### Promote User to Admin
 
 **PATCH** `/api/admin/users/make-admin`
-
-Admin JWT required.
-
-Request:
 
 ```json
 {
@@ -75,15 +94,17 @@ Request:
 }
 ```
 
-The first admin can be bootstrapped manually in the database by updating one registered user's role to `ADMIN`.
+The first admin can be bootstrapped manually by updating one registered user's role to `ADMIN` in the database.
 
 ---
 
-## 3. Cities
+## Cities
 
-### Create City
+- **POST** `/api/admin/cities`
+- **GET** `/api/admin/cities/{cityId}`
+- **GET** `/api/admin/cities`
 
-**POST** `/api/admin/cities`
+Create request:
 
 ```json
 {
@@ -91,21 +112,18 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-### Get City
-
-**GET** `/api/admin/cities/{cityId}`
-
-### Get All Cities
-
-**GET** `/api/admin/cities`
-
 ---
 
-## 4. Movies
+## Movies
 
-### Create Movie
+- **POST** `/api/admin/movies`
+- **GET** `/api/admin/movies/{movieId}`
+- **GET** `/api/admin/movies`
+- **GET** `/api/admin/movies/search?title=Inter`
+- **GET** `/api/admin/movies/language?language=English`
+- **GET** `/api/admin/movies/genre?genre=Sci-Fi`
 
-**POST** `/api/admin/movies`
+Create request:
 
 ```json
 {
@@ -117,37 +135,21 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-### Get Movie
-
-**GET** `/api/admin/movies/{movieId}`
-
-### Get All Movies
-
-**GET** `/api/admin/movies`
-
-### Search Movies by Title
-
-**GET** `/api/admin/movies/search?title=Inter`
-
-### Filter by Language
-
-**GET** `/api/admin/movies/language?language=English`
-
-### Filter by Genre
-
-**GET** `/api/admin/movies/genre?genre=Sci-Fi`
-
 ---
 
-## 5. Theaters
+## Theaters
 
-### Create Theater
+- **POST** `/api/admin/theaters`
+- **GET** `/api/admin/theaters/{theaterId}`
+- **GET** `/api/admin/theaters`
+- **GET** `/api/admin/theaters/city/{cityId}`
+- **GET** `/api/admin/theaters/search?name=Central`
 
-**POST** `/api/admin/theaters`
+Create request:
 
 ```json
 {
-  "name": "DMG Cinemas",
+  "name": "Central Cinemas",
   "address": "MG Road",
   "landmark": "Near Metro",
   "postalCode": "560001",
@@ -155,29 +157,16 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-### Get Theater
-
-**GET** `/api/admin/theaters/{theaterId}`
-
-### Get All Theaters
-
-**GET** `/api/admin/theaters`
-
-### Get Theaters by City
-
-**GET** `/api/admin/theaters/city/{cityId}`
-
-### Search Theaters
-
-**GET** `/api/admin/theaters/search?name=DMG`
-
 ---
 
-## 6. Screens
+## Screens
 
-### Create Screen
+- **POST** `/api/admin/screens`
+- **GET** `/api/admin/screens/{screenId}`
+- **GET** `/api/admin/screens`
+- **GET** `/api/admin/screens/theater/{theaterId}`
 
-**POST** `/api/admin/screens`
+Create request:
 
 ```json
 {
@@ -186,25 +175,15 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-### Get Screen
-
-**GET** `/api/admin/screens/{screenId}`
-
-### Get All Screens
-
-**GET** `/api/admin/screens`
-
-### Get Screens by Theater
-
-**GET** `/api/admin/screens/theater/{theaterId}`
-
 ---
 
-## 7. Seats
+## Seats
 
-### Create Seat Layout
+- **POST** `/api/admin/seats/layout`
+- **GET** `/api/admin/seats/{seatId}`
+- **GET** `/api/admin/seats/screen/{screenId}`
 
-**POST** `/api/admin/seats/layout`
+Create layout request:
 
 ```json
 {
@@ -224,21 +203,17 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-### Get Seat
-
-**GET** `/api/admin/seats/{seatId}`
-
-### Get Seats by Screen
-
-**GET** `/api/admin/seats/screen/{screenId}`
-
 ---
 
-## 8. Shows
+## Shows
 
-### Create Show
+- **POST** `/api/admin/shows`
+- **GET** `/api/admin/shows/{showId}`
+- **GET** `/api/admin/shows/movie/{movieId}`
+- **GET** `/api/admin/shows/screen/{screenId}`
+- **GET** `/api/admin/shows/movie/{movieId}/range?start=...&end=...`
 
-**POST** `/api/admin/shows`
+Create request:
 
 ```json
 {
@@ -250,31 +225,17 @@ The first admin can be bootstrapped manually in the database by updating one reg
 }
 ```
 
-The service calculates `endTime` from movie duration, rejects overlapping scheduled shows, and creates `ShowSeat` records for active physical seats.
-
-### Get Show
-
-**GET** `/api/admin/shows/{showId}`
-
-### Get Shows by Movie
-
-**GET** `/api/admin/shows/movie/{movieId}`
-
-### Get Shows by Screen
-
-**GET** `/api/admin/shows/screen/{screenId}`
-
-### Get Shows by Movie and Date Range
-
-**GET** `/api/admin/shows/movie/{movieId}/range?start=2026-09-20T00:00:00&end=2026-09-30T23:59:59`
+Show creation calculates `endTime`, rejects overlapping scheduled shows, and generates `ShowSeat` records for active physical seats.
 
 ---
 
-## 9. Discount Codes
+## Discount Codes
 
-### Create Discount Code
+- **POST** `/api/admin/discount-codes`
+- **GET** `/api/admin/discount-codes`
+- **PATCH** `/api/admin/discount-codes/{discountCodeId}/active?active=true`
 
-**POST** `/api/admin/discount-codes`
+Example:
 
 ```json
 {
@@ -288,21 +249,15 @@ The service calculates `endTime` from movie duration, rejects overlapping schedu
 }
 ```
 
-### Get All Discount Codes
-
-**GET** `/api/admin/discount-codes`
-
-### Activate / Deactivate Discount
-
-**PATCH** `/api/admin/discount-codes/{discountCodeId}/active?active=true`
-
 ---
 
-## 10. Refund Policies
+## Refund Policies
 
-### Create Refund Policy
+- **POST** `/api/admin/refund-policies`
+- **GET** `/api/admin/refund-policies`
+- **PATCH** `/api/admin/refund-policies/{policyId}/active?active=true`
 
-**POST** `/api/admin/refund-policies`
+Example:
 
 ```json
 {
@@ -311,65 +266,24 @@ The service calculates `endTime` from movie duration, rejects overlapping schedu
 }
 ```
 
-Example configuration:
+---
 
-```text
-24 hours -> 100%
-6 hours  -> 75%
-2 hours  -> 50%
-```
+## Customer Catalog
 
-### Get All Refund Policies
-
-**GET** `/api/admin/refund-policies`
-
-### Activate / Deactivate Refund Policy
-
-**PATCH** `/api/admin/refund-policies/{policyId}/active?active=true`
+- **GET** `/api/catalog/movies`
+- **GET** `/api/catalog/movies/search?title=Inter`
+- **GET** `/api/catalog/movies/{movieId}`
+- **GET** `/api/catalog/cities/{cityId}/theaters`
+- **GET** `/api/catalog/movies/{movieId}/shows`
+- **GET** `/api/catalog/movies/{movieId}/shows/range?start=...&end=...`
+- **GET** `/api/catalog/shows/{showId}`
+- **GET** `/api/catalog/shows/{showId}/seats`
 
 ---
 
-## 11. Customer Catalog
+## Seat Holds
 
-All catalog APIs require an authenticated user with the current security configuration.
-
-### Get Movies
-
-**GET** `/api/catalog/movies`
-
-### Search Movies
-
-**GET** `/api/catalog/movies/search?title=Inter`
-
-### Get Movie
-
-**GET** `/api/catalog/movies/{movieId}`
-
-### Get Theaters by City
-
-**GET** `/api/catalog/cities/{cityId}/theaters`
-
-### Get Shows by Movie
-
-**GET** `/api/catalog/movies/{movieId}/shows`
-
-### Get Shows by Movie and Range
-
-**GET** `/api/catalog/movies/{movieId}/shows/range?start=...&end=...`
-
-### Get Show
-
-**GET** `/api/catalog/shows/{showId}`
-
-### Get Show Seats
-
-**GET** `/api/catalog/shows/{showId}/seats`
-
----
-
-## 12. Seat Holds
-
-### Create Seat Hold
+### Create Hold
 
 **POST** `/api/seat-holds`
 
@@ -382,11 +296,10 @@ All catalog APIs require an authenticated user with the current security configu
 
 Behavior:
 
-- selected `ShowSeat` rows are pessimistically locked
-- only `AVAILABLE` seats can be held
-- hold expiry defaults to 5 minutes
-- stale expired holds are handled synchronously
-- background scheduler also expires old holds
+- locks selected `ShowSeat` rows using pessimistic locking
+- prevents double allocation
+- defaults to a 5-minute hold
+- expires stale holds synchronously and via scheduler
 
 ### Get Hold
 
@@ -398,7 +311,7 @@ Behavior:
 
 ---
 
-## 13. Bookings
+## Bookings
 
 ### Create Booking
 
@@ -411,20 +324,7 @@ Behavior:
 }
 ```
 
-Without discount:
-
-```json
-{
-  "holdId": 1,
-  "discountCode": null
-}
-```
-
-A newly created booking starts in:
-
-```text
-PENDING_PAYMENT
-```
+New bookings start as `PENDING_PAYMENT`.
 
 ### Get Booking
 
@@ -438,11 +338,9 @@ PENDING_PAYMENT
 
 **POST** `/api/bookings/{bookingId}/cancel`
 
-Cancellation evaluates the configured refund policy, releases seats, updates booking status, and processes the refund.
-
 ---
 
-## 14. Payments
+## Payments
 
 ### Process Payment
 
@@ -451,7 +349,7 @@ Cancellation evaluates the configured refund policy, releases seats, updates boo
 Headers:
 
 ```http
-Authorization: Bearer <jwt>
+Authorization: Bearer <access-token>
 Idempotency-Key: payment-booking-1-attempt-1
 ```
 
@@ -480,7 +378,7 @@ SeatHold -> CONFIRMED
 ShowSeat -> BOOKED
 ```
 
-Retrying the same request with the same idempotency key returns the existing payment result.
+Repeating the same request with the same idempotency key returns the existing payment result.
 
 ---
 

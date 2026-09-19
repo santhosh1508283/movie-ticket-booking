@@ -2,7 +2,7 @@
 
 ## Overview
 
-The application uses a layered Spring Boot architecture:
+This project uses a layered Spring Boot architecture:
 
 ```text
 Controller
@@ -16,7 +16,7 @@ Repository
 MySQL
 ```
 
-Supporting layers include:
+Supporting layers:
 
 ```text
 DTO
@@ -29,35 +29,57 @@ Scheduler
 Exception
 ```
 
-The base package is:
+Base package:
 
 ```text
 com.dmg.movieticket
 ```
 
+The package name is only a Java namespace and does not affect the API or project behavior.
+
 ---
 
-## 1. Authentication
+## Authentication and Security
 
 ### `AuthService`
 
 Responsibilities:
 
 - customer registration
-- password hashing using BCrypt
-- customer login
-- JWT generation
-- all public registrations receive `Role.CUSTOMER`
+- BCrypt password hashing
+- login
+- JWT access-token generation
+- refresh-token creation
+- access-token refresh
+- logout / refresh-token revocation
+
+Public registration always creates `Role.CUSTOMER`.
+
+### `RefreshTokenService`
+
+Responsibilities:
+
+- create one refresh token per user
+- invalidate the previous refresh token on a new login
+- verify expiry/revocation
+- revoke token on logout
+
+Current token lifetime:
+
+```text
+Access token  -> 15 minutes
+Refresh token -> 7 days
+```
 
 ### `CurrentUserService`
 
-Reads the current authenticated principal from Spring Security's `SecurityContext`.
+Reads the authenticated user from Spring Security's `SecurityContext`.
 
-Services do not accept `userId` from request payloads for customer-owned resources. Ownership is derived from the authenticated user.
+Customer-owned service methods do not accept a `userId` supplied by the client.
 
 ### `CustomUserDetailsService`
 
-Loads users by email and maps roles to Spring authorities:
+Loads users by email and maps:
 
 ```text
 ADMIN    -> ROLE_ADMIN
@@ -66,17 +88,13 @@ CUSTOMER -> ROLE_CUSTOMER
 
 ### `JwtAuthenticationFilter`
 
-Runs before controllers and:
-
-- reads `Authorization: Bearer ...`
+- reads bearer token
 - validates JWT
-- extracts the user's email
+- extracts email
 - loads `UserDetails`
 - populates the `SecurityContext`
 
 ### `SecurityConfig`
-
-Current rules:
 
 ```text
 /api/auth/**  -> public
@@ -84,127 +102,84 @@ Current rules:
 everything else -> authenticated
 ```
 
+Authorization is checked before the protected controller executes.
+
 ---
 
-## 2. CityService
-
-Responsibilities:
+## CityService
 
 - create city
-- get city by ID
+- fetch city
 - list cities
-- prevent duplicate names ignoring case
+- prevent duplicate names
 
----
-
-## 3. MovieService
-
-Responsibilities:
+## MovieService
 
 - create movie
-- get movie
-- list movies
+- fetch/list movies
 - search by title
 - filter by language
 - filter by genre
 
----
-
-## 4. TheaterService
-
-Responsibilities:
+## TheaterService
 
 - create theater
 - associate theater with city
-- prevent duplicate theater name within a city
-- get theater
-- list theaters
-- search theater
-- list theaters by city
+- prevent duplicate theater name within the same city
+- fetch/search/list theaters
 
----
+## ScreenService
 
-## 5. ScreenService
-
-Responsibilities:
-
-- create screen for a theater
-- prevent duplicate screen name inside the same theater
+- create screen
+- prevent duplicate screen names within the same theater
 - fetch screens
 
----
+## SeatService
 
-## 6. SeatService
-
-Responsibilities:
-
-- bulk-create physical screen seat layout
-- validate duplicate seats in one request
-- validate duplicate seats already persisted
+- bulk-create screen seat layout
+- detect request duplicates
+- detect persisted duplicates
 - fetch seats by screen
-
-Physical `Seat` records describe the reusable seat layout of a screen.
-
-`Seat.active` controls whether a physical seat should be used when generating seats for new shows.
+- preserve `Seat.active` for future show creation
 
 ---
 
-## 7. Pricing
+## Pricing Strategy
 
-### `PricingStrategy`
+`PricingStrategy` is used to calculate show-seat prices.
 
-```java
-boolean supports(PricingContext context);
-BigDecimal calculate(PricingContext context);
-```
-
-Implemented strategies:
-
-- `DefaultPricingStrategy`
-- `WeekendPricingStrategy`
-
-### `PricingStrategyResolver`
-
-Selects the appropriate pricing strategy.
-
-Regular and premium pricing are represented by the base price supplied when a show is created.
-
-Weekend pricing applies a contextual multiplier.
-
----
-
-## 8. ShowService
-
-Responsibilities:
-
-- create show
-- calculate `endTime` from movie duration
-- prevent overlapping scheduled shows for the same screen
-- load active screen seats
-- create a `ShowSeat` per active physical seat
-- calculate the final show-seat price using the pricing strategy
-- query shows by movie/screen/date range
-
-Show creation generates:
+Implementations:
 
 ```text
-Physical Seat
-    ↓
-ShowSeat
+DefaultPricingStrategy
+WeekendPricingStrategy
 ```
 
-`ShowSeat` represents availability for one seat for one specific show.
+`PricingStrategyResolver` selects the applicable strategy.
+
+Regular/premium prices are supplied as show base prices; weekend pricing is a contextual adjustment.
 
 ---
 
-## 9. ShowSeatService
+## ShowService
 
 Responsibilities:
 
-- return show seat availability
-- expose seat label, type, price and status
+- create shows
+- derive end time from movie duration
+- reject overlapping scheduled shows for a screen
+- load active physical seats
+- generate `ShowSeat` records
+- calculate final seat price
+- query shows by movie, screen and date range
 
-Statuses:
+---
+
+## ShowSeatService
+
+Returns seat availability for a show.
+
+States:
 
 ```text
 AVAILABLE
@@ -214,52 +189,36 @@ BOOKED
 
 ---
 
-## 10. SeatHoldService
+## SeatHoldService
 
-This service handles the main concurrency requirement.
+Core concurrency service.
 
 Responsibilities:
 
-- create temporary seat holds
+- create temporary holds
 - retrieve current user's hold
-- manually release a hold
-- automatically expire stale holds
-- release seats when the hold expires
+- release a hold
+- expire stale holds
+- release seats on expiry/cancellation
 
-Hold duration is configured using:
+Configuration:
 
 ```properties
 booking.seat-hold-duration-minutes=5
 ```
 
-### Concurrency
+### Pessimistic Locking
 
-Selected `ShowSeat` rows are loaded with:
+Selected `ShowSeat` rows use `PESSIMISTIC_WRITE`.
 
-```text
-PESSIMISTIC_WRITE
-```
+IDs are sorted before locking to reduce deadlock risk.
 
-Multiple seat IDs are sorted before locking to reduce deadlock risk.
-
-Example:
-
-```text
-Request A wants A1 + A2
-Request B wants A1
-
-Request A locks A1/A2
-Request B waits
-Request A commits HELD
-Request B reads HELD and fails
-```
-
-### State transitions
+State transitions:
 
 ```text
 ShowSeat:
 AVAILABLE -> HELD -> BOOKED
-HELD -> AVAILABLE on hold expiry/release
+HELD -> AVAILABLE
 
 SeatHold:
 ACTIVE -> CONFIRMED
@@ -269,84 +228,58 @@ ACTIVE -> CANCELLED
 
 ---
 
-## 11. SeatHoldExpirationScheduler
+## SeatHoldExpirationScheduler
 
-Runs periodically:
+Configured with:
 
 ```properties
 booking.seat-hold-cleanup-interval-ms=30000
 ```
 
-It finds:
+It finds expired active holds and releases their seats.
 
-```text
-status = ACTIVE
-expiresAt < now
-```
+If a related booking is still `PENDING_PAYMENT`, it becomes `EXPIRED`.
 
-and expires those holds.
-
-The scheduler is cleanup, not the only correctness mechanism. Services also check `expiresAt` synchronously.
+The scheduler is cleanup; services also check expiry synchronously.
 
 ---
 
-## 12. DiscountService
-
-Responsibilities:
+## DiscountService
 
 - validate discount code
-- validate active flag and validity window
+- validate active flag
+- validate validity window
 - validate minimum order amount
-- calculate flat or percentage discount
+- support FLAT/PERCENTAGE discounts
 - enforce maximum discount
-- prevent discount from exceeding subtotal
-
-Discount result contains:
-
-```text
-code
-discountAmount
-```
+- cap discount at subtotal
 
 ---
 
-## 13. BookingService
+## BookingService
 
-Responsibilities:
-
-- convert an active hold into a booking
-- lock the hold during creation
+- lock seat hold
 - prevent multiple bookings from one hold
-- snapshot prices and seat details into `BookingItem`
+- snapshot seat information and prices
+- calculate subtotal
 - apply optional discount
-- calculate subtotal / discount / final amount
-- return customer's bookings
-
-New bookings start as:
-
-```text
-PENDING_PAYMENT
-```
-
-No seat is converted to `BOOKED` at this stage.
+- create `PENDING_PAYMENT` booking
+- return current user's bookings
 
 ---
 
-## 14. PaymentService
+## PaymentService
 
-Responsibilities:
-
-- validate idempotency key
-- prevent duplicate payment processing
+- require idempotency key
+- return existing result for repeated idempotent requests
 - lock booking
-- ensure booking remains payable
-- ensure hold is still active
-- lock all selected show seats
+- validate active hold
+- lock all show seats
 - create payment attempt
 - call `PaymentProcessor`
-- atomically confirm booking after success
+- confirm booking atomically on success
 
-Successful transaction:
+Success:
 
 ```text
 Payment PENDING -> SUCCESS
@@ -355,7 +288,7 @@ SeatHold ACTIVE -> CONFIRMED
 ShowSeat HELD -> BOOKED
 ```
 
-Failed payment:
+Failure:
 
 ```text
 Payment -> FAILED
@@ -364,55 +297,39 @@ SeatHold -> ACTIVE
 ShowSeat -> HELD
 ```
 
-Customer can retry while the hold remains valid.
+`MockPaymentProcessor` simulates the external payment provider.
 
-### Payment abstraction
+---
 
-`PaymentProcessor` isolates external provider logic.
+## Refund Strategy
 
-Current implementation:
+`RefundCalculationStrategy` calculates refund percentage and amount.
+
+`ConfiguredRefundStrategy` uses persisted active `RefundPolicy` records.
+
+Example policy set:
 
 ```text
-MockPaymentProcessor
+>= 24 hours -> 100%
+>= 6 hours  -> 75%
+>= 2 hours  -> 50%
+< 2 hours   -> 0%
 ```
 
 ---
 
-## 15. Refund Strategy
+## RefundService
 
-### `RefundCalculationStrategy`
-
-Determines refund percentage and amount from cancellation time.
-
-### `ConfiguredRefundStrategy`
-
-Loads active refund policies sorted by required hours before show.
-
-Example:
-
-```text
->= 24h -> 100%
->= 6h  -> 75%
->= 2h  -> 50%
-< 2h   -> 0%
-```
-
----
-
-## 16. RefundService
-
-Responsibilities:
-
-- cancel a confirmed booking
+- cancel confirmed booking
 - prevent cancellation after show start
-- find successful payment
+- locate successful payment
 - calculate refund
-- lock booked show seats
+- lock seats
 - process refund
 - make seats available again
 - mark booking cancelled
 
-State changes:
+Transitions:
 
 ```text
 Booking CONFIRMED -> CANCELLED
@@ -420,30 +337,19 @@ ShowSeat BOOKED -> AVAILABLE
 Payment SUCCESS -> REFUNDED
 ```
 
-A zero-value refund still creates a refund audit record.
+A zero-value refund can still create an audit record.
 
-### Refund abstraction
-
-`RefundProcessor` isolates external provider logic.
-
-Current implementation:
-
-```text
-MockRefundProcessor
-```
+`MockRefundProcessor` simulates the external provider.
 
 ---
 
-## 17. Notification Architecture
+## Notification Architecture
 
 Notification delivery uses Strategy + Resolver + Events.
 
-### `NotificationStrategy`
+### Strategy
 
-```java
-boolean supports(NotificationChannel channel);
-void send(String recipient, String message);
-```
+`NotificationStrategy`
 
 Current implementation:
 
@@ -451,29 +357,11 @@ Current implementation:
 EmailNotificationStrategy
 ```
 
-The email delivery is simulated through application logs.
+Email delivery is simulated via application logs.
 
-### `NotificationStrategyResolver`
+### Resolver
 
-Chooses a notification implementation based on:
-
-```text
-EMAIL
-SMS
-PUSH
-```
-
-Only email is currently implemented.
-
-### `NotificationService`
-
-Responsibilities:
-
-- send booking confirmation
-- schedule booking reminder
-- send cancellation notification
-- send refund processed notification
-- process due pending notifications
+`NotificationStrategyResolver` selects a strategy using `NotificationChannel`.
 
 ### Events
 
@@ -483,38 +371,36 @@ BookingCancelledEvent
 RefundProcessedEvent
 ```
 
-Events contain IDs rather than JPA entities.
+Events carry IDs instead of JPA entities.
 
-### `NotificationEventListener`
+### Listener
 
-Uses:
+`NotificationEventListener` uses:
 
 ```text
 @Async
 @TransactionalEventListener(AFTER_COMMIT)
 ```
 
-This ensures notifications are only sent after the main business transaction commits.
+This prevents notifications from being sent for rolled-back business transactions.
 
-### Reminder scheduler
+### Reminder Scheduler
 
 ```properties
 notification.processing-interval-ms=60000
 ```
 
-The reminder is scheduled 2 hours before show time.
+Booking reminders are scheduled for two hours before show time.
 
 ---
 
-## 18. Error Handling
+## Error Handling
 
 `ApplicationException` is the common business exception.
 
-`ErrorCode` provides machine-readable error categories.
+`GlobalExceptionHandler` maps business errors to consistent API responses.
 
-`GlobalExceptionHandler` maps errors to HTTP responses.
-
-Examples:
+Typical mappings:
 
 ```text
 RESOURCE_NOT_FOUND       -> 404
@@ -529,64 +415,31 @@ CANCELLATION_NOT_ALLOWED -> 400
 
 ---
 
-## 19. Design Patterns Used
+## Design Patterns
 
-### Repository Pattern
-
-Spring Data JPA repositories isolate persistence.
-
-### Strategy Pattern
-
-Used for:
-
-- pricing
-- refund calculation
-- notification delivery
-
-### Resolver Pattern
-
-Used to select:
-
-- pricing strategy
-- notification strategy
-
-### Observer / Event Pattern
-
-Spring application events decouple notification side effects from booking/payment/refund transactions.
-
-### Mapper Pattern
-
-MapStruct maps entities to DTOs.
-
-### Builder Pattern
-
-Lombok `@Builder` is used to construct domain entities cleanly.
-
-### Explicit State Transition Model
-
-Entities use status enums and services enforce allowed transitions instead of using a heavyweight State Pattern implementation.
-
-### Idempotency
-
-Payment requests require an `Idempotency-Key`.
-
-### Pessimistic Locking
-
-Critical seat and booking/hold transitions use database row locks for serialization.
+- Repository Pattern
+- Strategy Pattern
+- Resolver Pattern
+- Observer/Event Pattern
+- Mapper Pattern with MapStruct
+- Builder Pattern with Lombok
+- Explicit state-transition model
+- Idempotency for payment processing
+- Pessimistic locking for critical booking flows
 
 ---
 
-## 20. Primary End-to-End Flow
+## End-to-End Flow
 
 ```text
-Admin creates:
+Admin:
 City
   ↓
 Theater
   ↓
 Screen
   ↓
-Seat layout
+Seat Layout
   ↓
 Movie
   ↓
@@ -595,39 +448,35 @@ Show
 ShowSeats
 
 Customer:
-Browse show
+Browse
   ↓
-View seats
+Hold Seats
   ↓
-Create 5-minute hold
-  ↓
-Create booking
+Create Booking
   ↓
 PENDING_PAYMENT
   ↓
-Process payment
+Payment
   ↓
 CONFIRMED
   ↓
-Async confirmation
+Async Confirmation
   ↓
-Scheduled reminder
+Scheduled Reminder
 ```
 
 Cancellation:
 
 ```text
-CONFIRMED booking
+CONFIRMED
    ↓
 Cancel
    ↓
-Refund policy
+Refund Policy
    ↓
-Refund processing
+Refund Processing
    ↓
-Booking CANCELLED
+CANCELLED
    ↓
 Seats AVAILABLE
-   ↓
-Async notifications
 ```
