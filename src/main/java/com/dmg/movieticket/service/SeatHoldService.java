@@ -10,4 +10,6 @@ public interface SeatHoldService {
     SeatHoldResponse getHold(Long holdId);
 
     void releaseHold(Long holdId);
+
+    void expireExpiredHolds();
 }

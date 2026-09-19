@@ -316,4 +316,21 @@ public class SeatHoldServiceImpl implements SeatHoldService {
         return showSeat.getSeat().getRowLabel()
                 + showSeat.getSeat().getSeatNumber();
     }
+
+    @Override
+    @Transactional
+    public void expireExpiredHolds() {
+
+        LocalDateTime now = LocalDateTime.now();
+
+        List<SeatHold> expiredHolds =
+                seatHoldRepository.findByStatusAndExpiresAtBefore(
+                        HoldStatus.ACTIVE,
+                        now
+                );
+
+        for (SeatHold hold : expiredHolds) {
+            expireHold(hold);
+        }
+    }
 }
