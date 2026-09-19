@@ -6,10 +6,7 @@ import com.dmg.movieticket.entity.*;
 import com.dmg.movieticket.exception.ApplicationException;
 import com.dmg.movieticket.exception.ErrorCode;
 import com.dmg.movieticket.mapper.SeatHoldMapper;
-import com.dmg.movieticket.repository.SeatHoldItemRepository;
-import com.dmg.movieticket.repository.SeatHoldRepository;
-import com.dmg.movieticket.repository.ShowRepository;
-import com.dmg.movieticket.repository.ShowSeatRepository;
+import com.dmg.movieticket.repository.*;
 import com.dmg.movieticket.security.CurrentUserService;
 import com.dmg.movieticket.service.SeatHoldService;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +27,7 @@ public class SeatHoldServiceImpl implements SeatHoldService {
     private final SeatHoldItemRepository seatHoldItemRepository;
     private final SeatHoldMapper seatHoldMapper;
     private final CurrentUserService currentUserService;
+    private final BookingRepository bookingRepository;
 
     @Value("${booking.seat-hold-duration-minutes:5}")
     private long holdDurationMinutes;
@@ -276,6 +274,15 @@ public class SeatHoldServiceImpl implements SeatHoldService {
         releaseSeats(hold);
 
         hold.setStatus(HoldStatus.EXPIRED);
+
+        bookingRepository.findBySeatHoldId(hold.getId())
+                .ifPresent(booking -> {
+
+                    if (booking.getStatus() == BookingStatus.PENDING_PAYMENT) {
+                        booking.setStatus(BookingStatus.EXPIRED);
+                        bookingRepository.save(booking);
+                    }
+                });
 
         seatHoldRepository.save(hold);
     }

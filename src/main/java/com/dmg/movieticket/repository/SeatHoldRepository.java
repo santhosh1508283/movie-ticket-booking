@@ -2,7 +2,11 @@ package com.dmg.movieticket.repository;
 
 import com.dmg.movieticket.entity.HoldStatus;
 import com.dmg.movieticket.entity.SeatHold;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -29,5 +33,17 @@ public interface SeatHoldRepository extends JpaRepository<SeatHold, Long> {
             Long id,
             Long userId,
             HoldStatus status
+    );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        SELECT sh
+        FROM SeatHold sh
+        WHERE sh.id = :holdId
+          AND sh.user.id = :userId
+        """)
+    Optional<SeatHold> findByIdAndUserIdForUpdate(
+            @Param("holdId") Long holdId,
+            @Param("userId") Long userId
     );
 }

@@ -60,6 +60,10 @@ public class Payment {
     private BigDecimal amount;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "payment_method", nullable = false, length = 30)
+    private PaymentMethod paymentMethod;
+
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private PaymentStatus status;
 
