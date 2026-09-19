@@ -5,18 +5,9 @@ import com.dmg.movieticket.dto.response.SeatHoldResponse;
 
 public interface SeatHoldService {
 
-    SeatHoldResponse createHold(
-            Long userId,
-            CreateSeatHoldRequest request
-    );
+    SeatHoldResponse createHold(CreateSeatHoldRequest request);
 
-    SeatHoldResponse getHold(
-            Long userId,
-            Long holdId
-    );
+    SeatHoldResponse getHold(Long holdId);
 
-    void releaseHold(
-            Long userId,
-            Long holdId
-    );
+    void releaseHold(Long holdId);
 }

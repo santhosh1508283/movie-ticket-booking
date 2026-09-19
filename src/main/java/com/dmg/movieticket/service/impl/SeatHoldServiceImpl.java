@@ -6,7 +6,11 @@ import com.dmg.movieticket.entity.*;
 import com.dmg.movieticket.exception.ApplicationException;
 import com.dmg.movieticket.exception.ErrorCode;
 import com.dmg.movieticket.mapper.SeatHoldMapper;
-import com.dmg.movieticket.repository.*;
+import com.dmg.movieticket.repository.SeatHoldItemRepository;
+import com.dmg.movieticket.repository.SeatHoldRepository;
+import com.dmg.movieticket.repository.ShowRepository;
+import com.dmg.movieticket.repository.ShowSeatRepository;
+import com.dmg.movieticket.security.CurrentUserService;
 import com.dmg.movieticket.service.SeatHoldService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,35 +18,27 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashSet;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class SeatHoldServiceImpl implements SeatHoldService {
 
-    private final UserRepository userRepository;
     private final ShowRepository showRepository;
     private final ShowSeatRepository showSeatRepository;
     private final SeatHoldRepository seatHoldRepository;
     private final SeatHoldItemRepository seatHoldItemRepository;
     private final SeatHoldMapper seatHoldMapper;
+    private final CurrentUserService currentUserService;
 
     @Value("${booking.seat-hold-duration-minutes:5}")
     private long holdDurationMinutes;
 
     @Override
     @Transactional
-    public SeatHoldResponse createHold(
-            Long userId,
-            CreateSeatHoldRequest request
-    ) {
+    public SeatHoldResponse createHold(CreateSeatHoldRequest request) {
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ApplicationException(
-                        ErrorCode.RESOURCE_NOT_FOUND,
-                        "User not found with id: " + userId
-                ));
+        User user = currentUserService.getCurrentUser();
 
         Show show = showRepository.findById(request.showId())
                 .orElseThrow(() -> new ApplicationException(
@@ -52,40 +48,33 @@ public class SeatHoldServiceImpl implements SeatHoldService {
 
         LocalDateTime now = LocalDateTime.now();
 
-        if (show.getStatus() != ShowStatus.SCHEDULED) {
-            throw new ApplicationException(
-                    ErrorCode.INVALID_STATE,
-                    "Seats cannot be held for a non-scheduled show"
-            );
-        }
+        validateShowForHold(show, now);
 
-        if (!show.getStartTime().isAfter(now)) {
-            throw new ApplicationException(
-                    ErrorCode.INVALID_STATE,
-                    "Seats cannot be held after the show has started"
-            );
-        }
-
-        List<Long> requestedIds = request.showSeatIds()
+        List<Long> requestedSeatIds = request.showSeatIds()
                 .stream()
                 .distinct()
                 .sorted()
                 .toList();
 
-        if (requestedIds.size() != request.showSeatIds().size()) {
+        if (requestedSeatIds.size() != request.showSeatIds().size()) {
             throw new ApplicationException(
                     ErrorCode.INVALID_REQUEST,
                     "Duplicate show seat ids are not allowed"
             );
         }
 
+        /*
+         * PESSIMISTIC_WRITE is applied inside the repository method.
+         *
+         * These rows stay locked until this transaction completes.
+         */
         List<ShowSeat> showSeats =
                 showSeatRepository.findByShowIdAndIdsForUpdate(
                         request.showId(),
-                        requestedIds
+                        requestedSeatIds
                 );
 
-        if (showSeats.size() != requestedIds.size()) {
+        if (showSeats.size() != requestedSeatIds.size()) {
             throw new ApplicationException(
                     ErrorCode.RESOURCE_NOT_FOUND,
                     "One or more selected seats do not exist for this show"
@@ -93,9 +82,7 @@ public class SeatHoldServiceImpl implements SeatHoldService {
         }
 
         /*
-         * A HELD seat may belong to an already-expired hold.
-         * We cannot rely only on the scheduler, so expired holds are
-         * cleaned synchronously when encountered.
+         * Check every selected seat while we own the DB lock.
          */
         for (ShowSeat showSeat : showSeats) {
 
@@ -108,35 +95,16 @@ public class SeatHoldServiceImpl implements SeatHoldService {
 
             if (showSeat.getStatus() == ShowSeatStatus.HELD) {
 
-                SeatHoldItem existingItem =
-                        seatHoldItemRepository
-                                .findFirstByShowSeatIdAndSeatHoldStatusOrderBySeatHoldExpiresAtDesc(
-                                        showSeat.getId(),
-                                        HoldStatus.ACTIVE
-                                )
-                                .orElseThrow(() -> new ApplicationException(
-                                        ErrorCode.INVALID_STATE,
-                                        "Seat is marked HELD without an active hold"
-                                ));
-
-                SeatHold existingHold = existingItem.getSeatHold();
-
-                if (existingHold.getExpiresAt().isAfter(now)) {
-                    throw new ApplicationException(
-                            ErrorCode.SEAT_NOT_AVAILABLE,
-                            "Seat is currently held: " + getSeatLabel(showSeat)
-                    );
-                }
-
-                expireHold(existingHold);
+                handleExistingHold(showSeat, now);
             }
         }
 
         /*
-         * expireHold() may have changed seats to AVAILABLE.
-         * Validate final state before assigning the new hold.
+         * handleExistingHold() may have expired an old hold.
+         * At this point every seat must therefore be AVAILABLE.
          */
         for (ShowSeat showSeat : showSeats) {
+
             if (showSeat.getStatus() != ShowSeatStatus.AVAILABLE) {
                 throw new ApplicationException(
                         ErrorCode.SEAT_NOT_AVAILABLE,
@@ -162,6 +130,9 @@ public class SeatHoldServiceImpl implements SeatHoldService {
                     .price(showSeat.getPrice())
                     .build();
 
+            /*
+             * Keep both sides of the JPA relationship synchronized.
+             */
             hold.getItems().add(item);
         }
 
@@ -173,34 +144,42 @@ public class SeatHoldServiceImpl implements SeatHoldService {
     }
 
     @Override
-    @Transactional(readOnly = true)
-    public SeatHoldResponse getHold(
-            Long userId,
-            Long holdId
-    ) {
+    @Transactional
+    public SeatHoldResponse getHold(Long holdId) {
+
+        User user = currentUserService.getCurrentUser();
 
         SeatHold hold = seatHoldRepository.findByIdAndUserId(
                         holdId,
-                        userId
+                        user.getId()
                 )
                 .orElseThrow(() -> new ApplicationException(
                         ErrorCode.RESOURCE_NOT_FOUND,
                         "Seat hold not found with id: " + holdId
                 ));
 
+        /*
+         * We should not return an ACTIVE hold if its expiry time
+         * has already passed.
+         */
+        if (hold.getStatus() == HoldStatus.ACTIVE
+                && !hold.getExpiresAt().isAfter(LocalDateTime.now())) {
+
+            expireHold(hold);
+        }
+
         return seatHoldMapper.toResponse(hold);
     }
 
     @Override
     @Transactional
-    public void releaseHold(
-            Long userId,
-            Long holdId
-    ) {
+    public void releaseHold(Long holdId) {
+
+        User user = currentUserService.getCurrentUser();
 
         SeatHold hold = seatHoldRepository.findByIdAndUserId(
                         holdId,
-                        userId
+                        user.getId()
                 )
                 .orElseThrow(() -> new ApplicationException(
                         ErrorCode.RESOURCE_NOT_FOUND,
@@ -214,10 +193,78 @@ public class SeatHoldServiceImpl implements SeatHoldService {
             );
         }
 
+        if (!hold.getExpiresAt().isAfter(LocalDateTime.now())) {
+
+            expireHold(hold);
+
+            throw new ApplicationException(
+                    ErrorCode.HOLD_EXPIRED,
+                    "Seat hold has already expired"
+            );
+        }
+
         releaseSeats(hold);
 
         hold.setStatus(HoldStatus.CANCELLED);
+
         seatHoldRepository.save(hold);
+    }
+
+    private void validateShowForHold(
+            Show show,
+            LocalDateTime now
+    ) {
+
+        if (show.getStatus() != ShowStatus.SCHEDULED) {
+            throw new ApplicationException(
+                    ErrorCode.INVALID_STATE,
+                    "Seats cannot be held for a non-scheduled show"
+            );
+        }
+
+        if (!show.getStartTime().isAfter(now)) {
+            throw new ApplicationException(
+                    ErrorCode.INVALID_STATE,
+                    "Seats cannot be held after the show has started"
+            );
+        }
+    }
+
+    private void handleExistingHold(
+            ShowSeat showSeat,
+            LocalDateTime now
+    ) {
+
+        SeatHoldItem existingItem =
+                seatHoldItemRepository
+                        .findFirstByShowSeatIdAndSeatHoldStatusOrderBySeatHoldExpiresAtDesc(
+                                showSeat.getId(),
+                                HoldStatus.ACTIVE
+                        )
+                        .orElseThrow(() -> new ApplicationException(
+                                ErrorCode.INVALID_STATE,
+                                "Seat is marked HELD without an active hold"
+                        ));
+
+        SeatHold existingHold = existingItem.getSeatHold();
+
+        /*
+         * Hold is still valid.
+         */
+        if (existingHold.getExpiresAt().isAfter(now)) {
+
+            throw new ApplicationException(
+                    ErrorCode.SEAT_NOT_AVAILABLE,
+                    "Seat is currently held: " + getSeatLabel(showSeat)
+            );
+        }
+
+        /*
+         * Hold expired but scheduler has not cleaned it yet.
+         *
+         * Expire synchronously.
+         */
+        expireHold(existingHold);
     }
 
     private void expireHold(SeatHold hold) {
@@ -229,6 +276,7 @@ public class SeatHoldServiceImpl implements SeatHoldService {
         releaseSeats(hold);
 
         hold.setStatus(HoldStatus.EXPIRED);
+
         seatHoldRepository.save(hold);
     }
 
@@ -247,19 +295,24 @@ public class SeatHoldServiceImpl implements SeatHoldService {
             return;
         }
 
-        List<ShowSeat> seats =
+        /*
+         * Lock the rows before changing HELD -> AVAILABLE.
+         */
+        List<ShowSeat> showSeats =
                 showSeatRepository.findByIdsForUpdate(showSeatIds);
 
-        for (ShowSeat seat : seats) {
-            if (seat.getStatus() == ShowSeatStatus.HELD) {
-                seat.setStatus(ShowSeatStatus.AVAILABLE);
+        for (ShowSeat showSeat : showSeats) {
+
+            if (showSeat.getStatus() == ShowSeatStatus.HELD) {
+                showSeat.setStatus(ShowSeatStatus.AVAILABLE);
             }
         }
 
-        showSeatRepository.saveAll(seats);
+        showSeatRepository.saveAll(showSeats);
     }
 
     private String getSeatLabel(ShowSeat showSeat) {
+
         return showSeat.getSeat().getRowLabel()
                 + showSeat.getSeat().getSeatNumber();
     }
