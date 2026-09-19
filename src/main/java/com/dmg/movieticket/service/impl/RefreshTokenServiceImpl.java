@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -28,29 +29,33 @@ public class RefreshTokenServiceImpl
     @Transactional
     public RefreshToken createRefreshToken(User user) {
 
-        /*
-         * Keep only one refresh token per user.
-         * Logging in again invalidates the previous refresh token.
-         */
-        refreshTokenRepository.deleteByUserId(user.getId());
-
         RefreshToken refreshToken =
-                RefreshToken.builder()
-                        .user(user)
-                        .token(UUID.randomUUID().toString())
-                        .expiresAt(
-                                LocalDateTime.now().plus(
-                                        java.time.Duration.ofMillis(
-                                                refreshTokenExpirationMs
-                                        )
-                                )
+                refreshTokenRepository
+                        .findByUserId(user.getId())
+                        .orElseGet(() ->
+                                RefreshToken.builder()
+                                        .user(user)
+                                        .build()
+                        );
+
+        refreshToken.setToken(
+                UUID.randomUUID().toString()
+        );
+
+        refreshToken.setExpiresAt(
+                LocalDateTime.now().plus(
+                        Duration.ofMillis(
+                                refreshTokenExpirationMs
                         )
-                        .revoked(false)
-                        .build();
+                )
+        );
 
-        return refreshTokenRepository.save(refreshToken);
+        refreshToken.setRevoked(false);
+
+        return refreshTokenRepository.save(
+                refreshToken
+        );
     }
-
     @Override
     @Transactional(readOnly = true)
     public RefreshToken verifyRefreshToken(String token) {
