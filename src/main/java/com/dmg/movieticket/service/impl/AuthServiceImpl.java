@@ -1,8 +1,10 @@
 package com.dmg.movieticket.service.impl;
 
 import com.dmg.movieticket.dto.request.LoginRequest;
+import com.dmg.movieticket.dto.request.RefreshTokenRequest;
 import com.dmg.movieticket.dto.request.RegisterRequest;
 import com.dmg.movieticket.dto.response.AuthResponse;
+import com.dmg.movieticket.entity.RefreshToken;
 import com.dmg.movieticket.entity.Role;
 import com.dmg.movieticket.entity.User;
 import com.dmg.movieticket.exception.ApplicationException;
@@ -10,6 +12,7 @@ import com.dmg.movieticket.exception.ErrorCode;
 import com.dmg.movieticket.repository.UserRepository;
 import com.dmg.movieticket.security.JwtService;
 import com.dmg.movieticket.service.AuthService;
+import com.dmg.movieticket.service.RefreshTokenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -27,6 +30,7 @@ public class AuthServiceImpl
     private final PasswordEncoder passwordEncoder;
     private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
+    private final RefreshTokenService refreshTokenService;
 
     @Override
     @Transactional
@@ -40,10 +44,10 @@ public class AuthServiceImpl
                         .toLowerCase();
 
         if (userRepository.existsByEmail(email)) {
+
             throw new ApplicationException(
                     ErrorCode.DUPLICATE_RESOURCE,
-                    "User already exists with email: "
-                            + email
+                    "User already exists with email: " + email
             );
         }
 
@@ -61,22 +65,24 @@ public class AuthServiceImpl
         User savedUser =
                 userRepository.save(user);
 
-        String token =
+        String accessToken =
                 jwtService.generateToken(
                         savedUser.getEmail()
                 );
 
-        return new AuthResponse(
-                savedUser.getId(),
-                savedUser.getName(),
-                savedUser.getEmail(),
-                savedUser.getRole(),
-                token
+        RefreshToken refreshToken =
+                refreshTokenService
+                        .createRefreshToken(savedUser);
+
+        return buildAuthResponse(
+                savedUser,
+                accessToken,
+                refreshToken.getToken()
         );
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public AuthResponse login(
             LoginRequest request
     ) {
@@ -103,26 +109,85 @@ public class AuthServiceImpl
             );
         }
 
-        User user = userRepository
-                .findByEmail(email)
-                .orElseThrow(() ->
-                        new ApplicationException(
-                                ErrorCode.UNAUTHORIZED,
-                                "Invalid email or password"
-                        )
-                );
+        User user =
+                userRepository.findByEmail(email)
+                        .orElseThrow(() ->
+                                new ApplicationException(
+                                        ErrorCode.UNAUTHORIZED,
+                                        "Invalid email or password"
+                                )
+                        );
 
-        String token =
+        String accessToken =
                 jwtService.generateToken(
                         user.getEmail()
                 );
+
+        RefreshToken refreshToken =
+                refreshTokenService
+                        .createRefreshToken(user);
+
+        return buildAuthResponse(
+                user,
+                accessToken,
+                refreshToken.getToken()
+        );
+    }
+
+    @Override
+    @Transactional
+    public AuthResponse refresh(
+            RefreshTokenRequest request
+    ) {
+
+        RefreshToken refreshToken =
+                refreshTokenService
+                        .verifyRefreshToken(
+                                request.refreshToken().trim()
+                        );
+
+        User user =
+                refreshToken.getUser();
+
+        String newAccessToken =
+                jwtService.generateToken(
+                        user.getEmail()
+                );
+
+        /*
+         * Keep the same refresh token until it expires/logout.
+         */
+        return buildAuthResponse(
+                user,
+                newAccessToken,
+                refreshToken.getToken()
+        );
+    }
+
+    @Override
+    @Transactional
+    public void logout(
+            RefreshTokenRequest request
+    ) {
+
+        refreshTokenService.revokeRefreshToken(
+                request.refreshToken().trim()
+        );
+    }
+
+    private AuthResponse buildAuthResponse(
+            User user,
+            String accessToken,
+            String refreshToken
+    ) {
 
         return new AuthResponse(
                 user.getId(),
                 user.getName(),
                 user.getEmail(),
                 user.getRole(),
-                token
+                accessToken,
+                refreshToken
         );
     }
 }
