@@ -3,6 +3,8 @@ package com.dmg.movieticket.service.impl;
 import com.dmg.movieticket.dto.response.BookingCancellationResponse;
 import com.dmg.movieticket.dto.response.RefundResponse;
 import com.dmg.movieticket.entity.*;
+import com.dmg.movieticket.event.BookingCancelledEvent;
+import com.dmg.movieticket.event.RefundProcessedEvent;
 import com.dmg.movieticket.exception.ApplicationException;
 import com.dmg.movieticket.exception.ErrorCode;
 import com.dmg.movieticket.mapper.RefundMapper;
@@ -14,6 +16,7 @@ import com.dmg.movieticket.service.refund.RefundProcessor;
 import com.dmg.movieticket.strategy.refund.RefundCalculationResult;
 import com.dmg.movieticket.strategy.refund.RefundCalculationStrategy;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +38,8 @@ public class RefundServiceImpl implements RefundService {
     private final RefundMapper refundMapper;
 
     private final CurrentUserService currentUserService;
+
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -205,6 +210,22 @@ public class RefundServiceImpl implements RefundService {
 
         Refund savedRefund =
                 refundRepository.save(refund);
+
+        /*
+         * These events will only be handled after the
+         * cancellation transaction commits successfully.
+         */
+        eventPublisher.publishEvent(
+                new BookingCancelledEvent(
+                        booking.getId()
+                )
+        );
+
+        eventPublisher.publishEvent(
+                new RefundProcessedEvent(
+                        savedRefund.getId()
+                )
+        );
 
         RefundResponse refundResponse =
                 refundMapper.toResponse(savedRefund);

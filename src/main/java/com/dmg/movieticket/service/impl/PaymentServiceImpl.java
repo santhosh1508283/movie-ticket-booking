@@ -11,6 +11,7 @@ import com.dmg.movieticket.entity.SeatHold;
 import com.dmg.movieticket.entity.ShowSeat;
 import com.dmg.movieticket.entity.ShowSeatStatus;
 import com.dmg.movieticket.entity.User;
+import com.dmg.movieticket.event.BookingConfirmedEvent;
 import com.dmg.movieticket.exception.ApplicationException;
 import com.dmg.movieticket.exception.ErrorCode;
 import com.dmg.movieticket.mapper.PaymentMapper;
@@ -22,6 +23,7 @@ import com.dmg.movieticket.service.PaymentService;
 import com.dmg.movieticket.service.payment.PaymentProcessingResult;
 import com.dmg.movieticket.service.payment.PaymentProcessor;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +40,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentProcessor paymentProcessor;
     private final PaymentMapper paymentMapper;
     private final CurrentUserService currentUserService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional
@@ -266,6 +269,19 @@ public class PaymentServiceImpl implements PaymentService {
 
         Payment savedPayment =
                 paymentRepository.save(payment);
+
+        /*
+         * Publish inside the transaction.
+         *
+         * NotificationEventListener uses AFTER_COMMIT,
+         * so notification processing starts only if this
+         * entire transaction commits successfully.
+         */
+        eventPublisher.publishEvent(
+                new BookingConfirmedEvent(
+                        booking.getId()
+                )
+        );
 
         return paymentMapper.toResponse(savedPayment);
     }
