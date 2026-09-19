@@ -1,5 +1,6 @@
 package com.dmg.movieticket.repository;
 
+import com.dmg.movieticket.entity.HoldStatus;
 import com.dmg.movieticket.entity.SeatHoldItem;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -13,5 +14,10 @@ public interface SeatHoldItemRepository extends JpaRepository<SeatHoldItem, Long
     Optional<SeatHoldItem> findBySeatHoldIdAndShowSeatId(
             Long seatHoldId,
             Long showSeatId
+    );
+
+    Optional<SeatHoldItem> findFirstByShowSeatIdAndSeatHoldStatusOrderBySeatHoldExpiresAtDesc(
+            Long showSeatId,
+            HoldStatus status
     );
 }
